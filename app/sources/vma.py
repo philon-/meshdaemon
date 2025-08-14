@@ -60,7 +60,7 @@ async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
     async with session.get(URL, params=params, timeout=15) as resp:
         resp.raise_for_status()
         data = await resp.json()
-    log.info(f"[VMA] Fetched {len(data.get("alerts"))} alerts")
+    log.info(f"[VMA] Fetched {len(data.get('alerts'))} alerts")
 
     items = data.get("alerts")
     out: List[str] = []
