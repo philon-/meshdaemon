@@ -8,7 +8,7 @@ import time
 import aiohttp
 
 from . import config
-from .udp import setup_node, UdpReceiver, send_nodeinfo
+from .udp import setup_node, PubSubReceiver, send_nodeinfo
 from .router import Router
 
 # Sources
@@ -56,18 +56,18 @@ async def main() -> None:
     setup_node(log)
     send_nodeinfo(log)
 
-    router = Router(ttl_secs=config.SEEN_TTL_SECS, log=log)
+    router = Router(ttl_secs=config.SEEN_TTL_SECS, log=log, hold_window=config.HOLD_WINDOW_SECS, node_id=config.MESHTASTIC_NODE_ID, salt=config.INSTANCE_SALT)
 
     # UDP RX to mark seen
-    udp_rx = UdpReceiver(config.MCAST_GRP, config.MCAST_PORT, log, on_text=router.mark_seen_from_udp)
+    udp_rx = PubSubReceiver(log, on_text=router.mark_seen_from_udp)
     udp_rx.start()
 
     async with aiohttp.ClientSession() as session:
         push = make_push(router)
 
         # Start sources with warm-up (first fetch = mark seen only)
-        t_vma  = asyncio.create_task(vma.run(session, log, warmup=False, push=push), name="src:vma")
-        t_smhi = asyncio.create_task(smhi.run(session, log, warmup=False, push=push), name="src:smhi")
+        t_vma  = asyncio.create_task(vma.run(session, log, warmup=config.WARMUP, push=push), name="src:vma")
+        t_smhi = asyncio.create_task(smhi.run(session, log, warmup=config.WARMUP, push=push), name="src:smhi")
         t_hb   = asyncio.create_task(nodeinfo_heartbeat(log), name="task:nodeinfo")
 
         for t in (t_vma, t_smhi, t_hb):
