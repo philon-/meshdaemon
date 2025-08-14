@@ -134,7 +134,7 @@ class UdpReceiver:
 
                     if text and self.on_text:
                         try:
-                            _vprint(f"[UDP][RX] [RECV from {addr}] calling on_text: {text!r}")
+                            self.log.info(f"[UDP][RX] {text!r}")
                             self.on_text(text)
                         except Exception:
                             self.log.exception("[UDP] on_text callback failed")

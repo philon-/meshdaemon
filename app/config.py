@@ -31,3 +31,6 @@ SMHI_GEOCODE: int = int(os.getenv("SMHI_GEOCODE", "1"))  # 1 is Stockholm, defin
 
 
 UDP_VERBOSE: bool = os.getenv("UDP_VERBOSE", "0") == "1"  # Print UDP messages to stdout
+HOLD_WINDOW_SECS: float = float(os.getenv("HOLD_WINDOW_SECS", "60"))  # seconds; 0 disables hold-off
+INSTANCE_SALT: str | None = os.getenv("INSTANCE_SALT")  # Optional salt for hold-off, if not set uses the device MAC address
+WARMUP: bool = os.getenv("WARMUP", "1") == "1"  # If true, skip sending messages for the first fetch of each source.

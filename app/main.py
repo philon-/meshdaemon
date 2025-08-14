@@ -56,7 +56,7 @@ async def main() -> None:
     setup_node(log)
     send_nodeinfo(log)
 
-    router = Router(ttl_secs=config.SEEN_TTL_SECS, log=log)
+    router = Router(ttl_secs=config.SEEN_TTL_SECS, log=log, hold_window=config.HOLD_WINDOW_SECS, node_id=config.MESHTASTIC_NODE_ID, salt=config.INSTANCE_SALT)
 
     # UDP RX to mark seen
     udp_rx = UdpReceiver(config.MCAST_GRP, config.MCAST_PORT, log, on_text=router.mark_seen_from_udp)
