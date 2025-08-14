@@ -10,7 +10,7 @@ from meshtastic import protocols
 from mudp.singleton import conn
 from mudp.encryption import decrypt_packet
 from mudp import node, send_text_message, send_nodeinfo as _send_nodeinfo
-
+import socket
 from . import config
 
 OnTextCb = Callable[[str], None]
@@ -118,7 +118,7 @@ class UdpReceiver:
         if getattr(conn, "socket", None) is None:
             conn.setup_multicast(self.group, self.port)
         try:
-            conn.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+            conn.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
             self.log.info("UDP: multicast loopback ENABLED")
         except Exception as e:
             self.log.warning("UDP: could not set IP_MULTICAST_LOOP=1: %r", e)
