@@ -118,6 +118,12 @@ class UdpReceiver:
         if getattr(conn, "socket", None) is None:
             conn.setup_multicast(self.group, self.port)
         try:
+            conn.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+            self.log.info("UDP: multicast loopback ENABLED")
+        except Exception as e:
+            self.log.warning("UDP: could not set IP_MULTICAST_LOOP=1: %r", e)
+        
+        try:
             conn.socket.setblocking(False)
         except Exception:
             pass
