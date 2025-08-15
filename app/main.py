@@ -66,8 +66,8 @@ async def main() -> None:
         push = make_push(router)
 
         # Start sources with warm-up (first fetch = mark seen only)
-        t_vma  = asyncio.create_task(vma.run(session, log, warmup=False, push=push), name="src:vma")
-        t_smhi = asyncio.create_task(smhi.run(session, log, warmup=False, push=push), name="src:smhi")
+        t_vma  = asyncio.create_task(vma.run(session, log, warmup=config.WARMUP, push=push), name="src:vma")
+        t_smhi = asyncio.create_task(smhi.run(session, log, warmup=config.WARMUP, push=push), name="src:smhi")
         t_hb   = asyncio.create_task(nodeinfo_heartbeat(log), name="task:nodeinfo")
 
         for t in (t_vma, t_smhi, t_hb):
