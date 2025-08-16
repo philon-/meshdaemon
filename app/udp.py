@@ -114,19 +114,29 @@ class UdpReceiver:
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
 
-        # Ensure conn.socket exists and is non-blocking for add_reader
         if getattr(conn, "socket", None) is None:
-            conn.setup_multicast(self.group, self.port)
-        try:
-            conn.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-            self.log.info("UDP: multicast loopback ENABLED")
-        except Exception as e:
-            self.log.warning("UDP: could not set IP_MULTICAST_LOOP=1: %r", e)
-        
-        try:
-            conn.socket.setblocking(False)
-        except Exception:
-            pass
+            conn.host = self.group
+            conn.port = self.port
+
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 0)
+            except OSError:
+                pass
+
+            s.bind(("", self.port))
+            mreq = socket.inet_aton(self.group) + socket.inet_aton("0.0.0.0")
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+            try:
+                s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+            except OSError:
+                pass
+
+            s.setblocking(False)
+            conn.socket = s  # hand it to mudp
+       
 
         def _on_readable():
             try:

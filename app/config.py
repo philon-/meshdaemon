@@ -9,21 +9,21 @@ MCAST_PORT: int = int(os.getenv("MESHTASTIC_MCAST_PORT", "4403"))
 MESHTASTIC_NODE_ID: str = os.getenv("MESHTASTIC_NODE_ID", "!112")
 MESHTASTIC_LONG_NAME: str = os.getenv("MESHTASTIC_LONG_NAME", "VMA ROBOT")
 MESHTASTIC_SHORT_NAME: str = os.getenv("MESHTASTIC_SHORT_NAME", "VMA")
-MESHTASTIC_CHANNEL: str = os.getenv("MESHTASTIC_CHANNEL", "Test")
+MESHTASTIC_CHANNEL: str = os.getenv("MESHTASTIC_CHANNEL", "MediumFast")
 MESHTASTIC_KEY: str = os.getenv("MESHTASTIC_KEY", "ZkVuRFdCYW9BQlUzaUJLbmxrUWhWU1pxMEVtblJSeDY=")
-MESHTASTIC_HOP_LIMIT: int = int(os.getenv("MESHTASTIC_HOP_LIMIT", "1"))
+MESHTASTIC_HOP_LIMIT: int = int(os.getenv("MESHTASTIC_HOP_LIMIT", "3"))
 MESHTASTIC_MAX_BYTES = int(os.getenv("MESHTASTIC_MAX_BYTES", "200"))
 MESHTASTIC_MAX_MESSAGES = int(os.getenv("MESHTASTIC_MAX_MESSAGES", "2"))
 
 MESHTASTIC_NODEINFO_INTERVAL: int = int(os.getenv("NODEINFO_INTERVAL_SECS", "43200"))  # 43200s / 12h default
 
 # Dedupe TTL (seconds)
-SEEN_TTL_SECS: float = float(os.getenv("SEEN_TTL_SECS", "3600"))  # 1h
+SEEN_TTL_SECS: float = float(os.getenv("SEEN_TTL_SECS", "172800"))  # 1h
 
 # Sources
 VMA_URL: str = os.getenv("VMA_URL", "https://vmaapi.sr.se/api/v3-beta/alerts")
 VMA_INTERVAL: int = int(os.getenv("VMA_INTERVAL", "60"))
-VMA_GEOCODE: str = os.getenv("VMA_GEOCODE", "01")  # SE/18 is Stockholm
+VMA_GEOCODE: str = os.getenv("VMA_GEOCODE", "01")  # 01 is Stockholm
 
 SMHI_URL: str = os.getenv("SMHI_URL", "https://opendata-download-warnings.smhi.se/ibww/api/version/1/warning.json")
 SMHI_INTERVAL: int = int(os.getenv("SMHI_INTERVAL", "60"))
