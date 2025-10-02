@@ -10,6 +10,7 @@ from .. import config
 INTERVAL = config.SMHI_INTERVAL
 URL = config.SMHI_URL
 GEOCODE = config.SMHI_GEOCODE
+LOG_VERBOSE = config.LOG_VERBOSE
 
 async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
     async with session.get(URL, timeout=15) as resp:
@@ -36,15 +37,19 @@ async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
                 messages = truncate_utf8(fullMessage)
 
                 out.extend(messages)
-    
+    msgs = [m.strip() for m in out if m.strip()]
+    if LOG_VERBOSE:
+        log.info(f"[SMHI] Fetched {len(msgs)} messages")
+        for m in msgs:
+            log.info(f"[SMHI] Message: {m}")
     return [m.strip() for m in out if m.strip()]
 
 async def run(session: aiohttp.ClientSession, log, warmup: bool, push: callable) -> None:
     log.info("[SMHI] Starting source with warmup=%s", warmup)
     msgs = await fetch_messages(session, log)
-    if warmup:
-        for m in msgs:
-            push(m, seen_only=True)
+
+    for m in msgs:
+        push(m, seen_only=warmup)
     
     while True:
         await asyncio.sleep(INTERVAL)
