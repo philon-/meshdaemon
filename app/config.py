@@ -30,7 +30,12 @@ SMHI_URL: str = os.getenv("SMHI_URL", "https://opendata-download-warnings.smhi.s
 SMHI_INTERVAL: int = int(os.getenv("SMHI_INTERVAL", "60"))
 SMHI_GEOCODE: int = int(os.getenv("SMHI_GEOCODE", "1"))  # 1 is Stockholm, defined here https://opendata-download-warnings.smhi.se/ibww/api/version/1/metadata/area.json
 
-LOG_VERBOSE: bool = os.getenv("LOG_VERBOSE", "1") == "1" 
-HOLD_WINDOW_SECS: float = float(os.getenv("HOLD_WINDOW_SECS", "60"))  # seconds; 0 disables hold-off
+HOLD_WINDOW_SECS: int = int(os.getenv("HOLD_WINDOW_SECS", "60"))  # seconds; 0 disables hold-off
 INSTANCE_SALT: str | None = os.getenv("INSTANCE_SALT")  # Optional salt for hold-off, if not set uses the device MAC address
 WARMUP: bool = os.getenv("WARMUP", "1") == "1"  # If true, skip sending messages for the first fetch of each source.
+
+MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))  # perform 3 attempts
+BASE_BACKOFF: int = int(os.getenv("BASE_BACKOFF", "2"))  # base backoff in seconds
+
+MAX_RESTART_INTERVAL: int = int(os.getenv("MAX_RESTART_INTERVAL", "60"))  # restart throttling interval in seconds
+RESTART_HISTORY: int = int(os.getenv("RESTART_HISTORY", "5"))  # number of restarts in the interval to trigger stop

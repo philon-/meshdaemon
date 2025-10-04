@@ -40,6 +40,7 @@ class TTLSeen:
         for k in expired:
             self._d.pop(k, None)
 
+
 class Router:
 
     def __init__(self, ttl_secs: float, log: logging.Logger, hold_window, node_id, salt) -> None:
@@ -57,7 +58,6 @@ class Router:
         self._pending_task: dict[str, asyncio.Task] = {}
 
         log.info("[ROUTER] Router initialized. ttl_secs=%d, hold_window=%.1f, salt=%r", ttl_secs, self._hold_window, self._salt)
-
 
     @staticmethod
     def _norm(msg: str) -> str:
@@ -139,3 +139,9 @@ class Router:
 
         task = asyncio.create_task(self._hold_and_send(key), name=f"send:{key[:32]}")
         self._pending_task[key] = task
+
+    def push(self, msg: str, seen_only: bool = False) -> None:
+        if seen_only:
+            self.mark_seen(msg)
+        else:
+            self.maybe_send(msg)

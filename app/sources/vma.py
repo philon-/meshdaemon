@@ -10,7 +10,8 @@ from .. import config
 INTERVAL = config.VMA_INTERVAL  
 URL = config.VMA_URL             
 GEOCODE = config.VMA_GEOCODE
-LOG_VERBOSE = config.LOG_VERBOSE
+MAX_RETRIES = config.MAX_RETRIES
+BASE_BACKOFF = config.BASE_BACKOFF
 
 def _sv_message(alert: dict) -> Optional[str]:
     try:
@@ -54,34 +55,52 @@ def _sv_message(alert: dict) -> Optional[str]:
     except Exception:
         return None
 
-
 async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
+    """Fetch messages with retry logic and exponential backoff."""
     params = {"geocode": GEOCODE}
-    async with session.get(URL, params=params, timeout=15) as resp:
-        resp.raise_for_status()
-        data = await resp.json()
-
-    items = data.get("alerts")
-    out: List[str] = []
+    last_exception = None
     
-    for alert in items:
-        
-        if not isinstance(alert, dict):
-            continue
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with session.get(URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+            
+            # Success - process the data
+            items = data.get("alerts")
+            out: List[str] = []
+            
+            for alert in items:
+                if not isinstance(alert, dict):
+                    continue
 
-        msg = _sv_message(alert)
-        if not msg:
-            continue
+                msg = _sv_message(alert)
+                if not msg:
+                    continue
 
-        parts = truncate_utf8(msg)
-        out.extend(parts)
-    msgs = [m.strip() for m in out if m and m.strip()]
-    if LOG_VERBOSE:
-        log.info(f"[VMA] Fetched {len(msgs)} messages")
-        for m in msgs:
-            log.info(f"[VMA] Message: {m}")
-    return msgs
+                parts = truncate_utf8(msg)
+                out.extend(parts)
+            
+            msgs = [m.strip() for m in out if m and m.strip()]
 
+            log.info(f"[VMA] Fetched {len(msgs)} messages")
+            for m in msgs:
+                log.info(f"[VMA] Message: {m}")
+                
+            return msgs
+            
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            last_exception = e
+            if attempt < MAX_RETRIES - 1:
+                backoff_time = BASE_BACKOFF * (2 ** attempt)
+                log.warning(f"[VMA] Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}. Retrying in {backoff_time}s...")
+                await asyncio.sleep(backoff_time)
+            else:
+                log.error(f"[VMA] Request failed after {MAX_RETRIES} attempts: {e}")
+    
+    # If all retries failed, return empty list
+    log.error(f"[VMA] All retry attempts exhausted. Last error: {last_exception}")
+    return []
 
 async def run(session: aiohttp.ClientSession, log, warmup: bool, push: callable) -> None:
     log.info("[VMA] Starting source with warmup=%s", warmup)
