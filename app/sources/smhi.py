@@ -3,6 +3,7 @@ import asyncio
 from typing import Iterable, List
 import aiohttp
 from datetime import datetime
+import pytz
 
 from ..util import truncate_utf8
 from .. import config
@@ -34,8 +35,28 @@ async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
 
                     # Check if warningArea affects area with id=GEOCODE
                     if any(a["id"] == GEOCODE for a in wa["affectedAreas"]):
+                        
+                        stockholm_tz = pytz.timezone('Europe/Stockholm')
+
+                        # Parse and localize start time
+                        start_dt = datetime.fromisoformat(wa['approximateStart'])
+                        if start_dt.tzinfo is None:
+                            start_dt = pytz.utc.localize(start_dt)
+                        start_local = start_dt.astimezone(stockholm_tz)
+                        start_str = start_local.strftime('%Y-%m-%d %H:%M %Z')
+
+                        # Parse and localize end time
+                        end_dt = datetime.fromisoformat(wa['approximateEnd'])
+                        if end_dt.tzinfo is None:
+                            end_dt = pytz.utc.localize(end_dt)
+                        end_local = end_dt.astimezone(stockholm_tz)
+                        end_str = end_local.strftime('%Y-%m-%d %H:%M %Z')
+
                         # Construct the full message
-                        fullMessage = f"SMHI: {wa['warningLevel']['sv']} varning för {wa['areaName']['sv']} - {wa['eventDescription']['sv']} från {datetime.fromisoformat(wa['approximateStart']).strftime('%Y-%m-%d %H:%M')} till {datetime.fromisoformat(wa['approximateEnd']).strftime('%Y-%m-%d %H:%M')}"
+                        fullMessage = (
+                            f"SMHI: {wa['warningLevel']['sv']} varning för {wa['areaName']['sv']} - "
+                            f"{wa['eventDescription']['sv']} från {start_str} till {end_str}"
+                        )
                         
                         log.info(f"[SMHI] New alert {alert_id}")
 
