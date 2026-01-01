@@ -50,10 +50,10 @@ def format_range(start_local: datetime, end_local: datetime) -> str:
         end_txt = end_local.strftime("%d/%m %H:%M")
 
     if start_tz == end_tz:
-        return f"fr. {start_txt} t. {end_txt} {start_tz}"
+        return f"{start_txt} - {end_txt} {start_tz}"
 
     # DST boundary (or otherwise differing tzname)
-    return f"fr. {start_txt} {start_tz} t. {end_txt} {end_tz}"
+    return f"{start_txt} {start_tz} - {end_txt} {end_tz}"
 
 
 async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
@@ -95,7 +95,7 @@ async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
 
                         fullMessage = (
                             f"SMHI: {wa['warningLevel']['sv']} varning {wa['areaName']['sv']} - "
-                            f"{wa['eventDescription']['sv']}{time_part}"
+                            f"{wa['eventDescription']['sv']} [{time_part}]"
                         )
 
                         # Apply NÖ/N/etc replacements (case-insensitive)
