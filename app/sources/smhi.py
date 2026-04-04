@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+from zoneinfo import ZoneInfo
+from datetime import datetime
 from typing import List
 
 import aiohttp
-from datetime import datetime
-import pytz
 
 from ..util import truncate_utf8
 from .. import config
 
+log = logging.getLogger(__name__)
 
 INTERVAL = config.SMHI_INTERVAL
 URL = config.SMHI_URL
@@ -18,12 +20,13 @@ GEOCODE = config.SMHI_GEOCODE
 MAX_RETRIES = config.MAX_RETRIES
 BASE_BACKOFF = config.BASE_BACKOFF
 
+_STOCKHOLM = ZoneInfo("Europe/Stockholm")
+
 _REPLACEMENTS = {
     "norra": "N",
     "södra": "S",
     "östra": "Ö",
     "västra": "V",
-
     "nordöstra": "NÖ",
     "nordvästra": "NV",
     "sydöstra": "SÖ",
@@ -34,6 +37,7 @@ repl_pattern = re.compile(
     "|".join(re.escape(k) for k in sorted(_REPLACEMENTS, key=len, reverse=True)),
     flags=re.IGNORECASE,
 )
+
 
 def apply_replacements(text: str) -> str:
     return repl_pattern.sub(lambda m: _REPLACEMENTS[m.group(0).casefold()], text)
@@ -52,11 +56,16 @@ def format_range(start_local: datetime, end_local: datetime) -> str:
     if start_tz == end_tz:
         return f"{start_txt} - {end_txt} {start_tz}"
 
-    # DST boundary (or otherwise differing tzname)
     return f"{start_txt} {start_tz} - {end_txt} {end_tz}"
 
 
-async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
+def _to_stockholm(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    return dt.astimezone(_STOCKHOLM)
+
+
+async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
     last_exception = None
 
     for attempt in range(MAX_RETRIES):
@@ -70,76 +79,56 @@ async def fetch_messages(session: aiohttp.ClientSession, log) -> List[str]:
                 alert_id = alert["id"]
 
                 for wa in alert["warningAreas"]:
-                    # Filter out MESSAGEs
                     if wa["warningLevel"]["code"] == "MESSAGE":
                         continue
 
-                    # Check if warningArea affects area with id=GEOCODE
-                    if any(a["id"] == GEOCODE for a in wa["affectedAreas"]):
+                    if not any(a["id"] == GEOCODE for a in wa["affectedAreas"]):
+                        continue
 
-                        stockholm_tz = pytz.timezone("Europe/Stockholm") 
+                    start_local = _to_stockholm(datetime.fromisoformat(wa["approximateStart"]))
+                    end_local = _to_stockholm(datetime.fromisoformat(wa["approximateEnd"]))
+                    time_part = format_range(start_local, end_local)
 
-                        # Parse and localize start time
-                        start_dt = datetime.fromisoformat(wa["approximateStart"])
-                        if start_dt.tzinfo is None:
-                            start_dt = pytz.utc.localize(start_dt)
-                        start_local = start_dt.astimezone(stockholm_tz) 
+                    full_message = apply_replacements(
+                        f"SMHI: {wa['warningLevel']['sv']} varning {wa['areaName']['sv']} - "
+                        f"{wa['eventDescription']['sv']} [{time_part}]"
+                    )
 
-                        # Parse and localize end time
-                        end_dt = datetime.fromisoformat(wa["approximateEnd"])
-                        if end_dt.tzinfo is None:
-                            end_dt = pytz.utc.localize(end_dt)
-                        end_local = end_dt.astimezone(stockholm_tz)
-
-                        time_part = format_range(start_local, end_local)
-
-                        fullMessage = (
-                            f"SMHI: {wa['warningLevel']['sv']} varning {wa['areaName']['sv']} - "
-                            f"{wa['eventDescription']['sv']} [{time_part}]"
-                        )
-
-                        # Apply NÖ/N/etc replacements (case-insensitive)
-                        fullMessage = apply_replacements(fullMessage)
-
-                        log.info(f"[SMHI] New alert {alert_id}: {fullMessage}")
-
-                        # Cut it up if it's too long
-                        messages = truncate_utf8(fullMessage)
-                        out.extend(messages)
+                    log.info("[SMHI] New alert %s: %s", alert_id, full_message)
+                    out.extend(truncate_utf8(full_message))
 
             msgs = [m.strip() for m in out if m.strip()]
-
-            log.info(f"[SMHI] Fetched {len(msgs)} messages")
+            log.info("[SMHI] Fetched %d messages", len(msgs))
             for m in msgs:
-                log.info(f"[SMHI] Message: {m}")
+                log.info("[SMHI] Message: %s", m)
 
             return msgs
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             last_exception = e
             if attempt < MAX_RETRIES - 1:
-                backoff_time = BASE_BACKOFF * (2 ** attempt)
+                backoff = BASE_BACKOFF * (2 ** attempt)
                 log.warning(
-                    f"[SMHI] Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}. "
-                    f"Retrying in {backoff_time}s..."
+                    "[SMHI] Request failed (attempt %d/%d): %s. Retrying in %ss...",
+                    attempt + 1, MAX_RETRIES, e, backoff,
                 )
-                await asyncio.sleep(backoff_time)
+                await asyncio.sleep(backoff)
             else:
-                log.error(f"[SMHI] Request failed after {MAX_RETRIES} attempts: {e}")
+                log.error("[SMHI] Request failed after %d attempts: %s", MAX_RETRIES, e)
 
-    log.error(f"[SMHI] All retry attempts exhausted. Last error: {last_exception}")
+    log.error("[SMHI] All retry attempts exhausted. Last error: %s", last_exception)
     return []
 
 
-async def run(session: aiohttp.ClientSession, log, warmup: bool, push: callable) -> None:
+async def run(session: aiohttp.ClientSession, warmup: bool, push: callable) -> None:
     log.info("[SMHI] Starting source with warmup=%s", warmup)
-    msgs = await fetch_messages(session, log)
+    msgs = await fetch_messages(session)
 
     for m in msgs:
         push(m, seen_only=warmup)
 
     while True:
         await asyncio.sleep(INTERVAL)
-        msgs = await fetch_messages(session, log)
+        msgs = await fetch_messages(session)
         for m in msgs:
             push(m)
