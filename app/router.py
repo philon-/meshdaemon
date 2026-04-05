@@ -56,6 +56,7 @@ class Router:
         del addr
         try:
             self.seen.add(packet.id)
+            log.info("[ROUTER] Message received: id=0x%08x", packet.id)
         except Exception:
             log.exception("[ROUTER] mark_seen_from_udp failed")
 
@@ -64,9 +65,10 @@ class Router:
         key = make_message_id(normalized)
         if seen_only:
             self.seen.add(key)
+            log.info("[ROUTER] New message marked as seen: id=0x%08x", key)
             return
         if self.seen.seen(key):
-            log.info("[ROUTER] Message skipped: seen id=0x%08x", key)
+            log.info("[ROUTER] Message skipped (seen): id=0x%08x", key)
             return
         send_text(normalized, packet_id=key)
         self.seen.add(key)
