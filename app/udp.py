@@ -1,74 +1,70 @@
 from __future__ import annotations
 import logging
-from typing import Optional, Callable
+from typing import Callable
+
 from pubsub import pub
-from meshtastic.protobuf import mesh_pb2, portnums_pb2
-from mudp import node, conn, send_text_message, send_nodeinfo as _send_nodeinfo, UDPPacketStream
+from mudp import node, send_text_message, send_nodeinfo as _send_nodeinfo, UDPPacketStream
 
 from . import config
 
-OnTextCb = Callable[[str], None]
+_iface: UDPPacketStream | None = None
+_on_text: Callable[..., None] | None = None
+log: logging.Logger = logging.getLogger(__name__)
 
-def setup_node(log: logging.Logger) -> None:
+
+def setup_node() -> None:
     node.node_id = config.MESHTASTIC_NODE_ID
     node.long_name = config.MESHTASTIC_LONG_NAME
     node.short_name = config.MESHTASTIC_SHORT_NAME
     node.channel = config.MESHTASTIC_CHANNEL
     node.key = config.MESHTASTIC_KEY
-    conn.setup_multicast(config.MCAST_GRP, config.MCAST_PORT)
-    log.info("[UDP] Configured for %s:%d", config.MCAST_GRP, config.MCAST_PORT)
+    log.info("[UDP] Node setup complete: %s (%s)", config.MESHTASTIC_LONG_NAME, config.MESHTASTIC_NODE_ID)
 
-def send_text(msg: str, log) -> None:
-    send_text_message(msg, hop_limit=config.MESHTASTIC_HOP_LIMIT)
 
-def send_nodeinfo(log) -> None:
+def send_text(msg: str, packet_id: int) -> None:
+    send_text_message(msg, hop_limit=config.MESHTASTIC_HOP_LIMIT, packet_id=packet_id)
+
+
+def send_nodeinfo() -> None:
     _send_nodeinfo(hop_limit=config.MESHTASTIC_HOP_LIMIT)
 
-class PubSubReceiver:
-    def __init__(self, log: logging.Logger, *, on_text: Optional[OnTextCb] = None) -> None:
-        self.log = log
-        self.on_text = on_text
-        self._subscribed = False
-        self._iface: Optional[UDPPacketStream] = None
 
-    def _on_text_packet(self, packet: mesh_pb2.MeshPacket, addr=None) -> None:
-        try:
-            if not packet.HasField("decoded"):
-                return
-            if packet.decoded.portnum != portnums_pb2.PortNum.TEXT_MESSAGE_APP:
-                return
-            msg = packet.decoded.payload.decode("utf-8", "ignore").strip()
-            if msg:
-                self.log.info("[UDP][RX] %r", msg)
-                if self.on_text:
-                    self.on_text(msg)
-        except Exception:
-            self.log.exception("[UDP] on_text processing failed")
-
-    def start(self) -> None:
-        if self._subscribed:
-            return
-        # Start the UDP listener that publishes to pub/sub
-        self._iface = UDPPacketStream(config.MCAST_GRP, config.MCAST_PORT, key=node.key)
-        self._iface.start()
-
-        # Subscribe to mudp topics
-        pub.subscribe(self._on_text_packet, "mesh.rx.port.1")        # TEXT_MESSAGE_APP
-
-        self._subscribed = True
-        self.log.info("[UDP] PubSub listener started")
-
-    def stop(self) -> None:
-        if self._subscribed:
+def start(on_text: Callable[..., None] | None = None) -> None:
+    global _iface, _on_text
+    if _iface is not None:
+        log.warning("[UDP] Listener start skipped: already running")
+        return
+    callback = on_text
+    iface: UDPPacketStream | None = None
+    try:
+        if callback is not None:
+            pub.subscribe(callback, "mesh.rx.text")
+        iface = UDPPacketStream(config.MCAST_GRP, config.MCAST_PORT, key=node.key)
+        iface.start()
+    except Exception:
+        if callback is not None:
             try:
-                pub.unsubscribe(self._on_text_packet, "mesh.rx.port.1")
+                pub.unsubscribe(callback, "mesh.rx.text")
             except Exception:
                 pass
-            self._subscribed = False
-        if self._iface:
+        log.exception("[UDP] Listener start failed")
+        raise
+    _on_text = callback
+    _iface = iface
+    log.info("[UDP] Listener started: %s:%d", config.MCAST_GRP, config.MCAST_PORT)
+
+
+def stop() -> None:
+    global _iface, _on_text
+    try:
+        if _iface is not None:
+            _iface.stop()
+    finally:
+        _iface = None
+        if _on_text is not None:
             try:
-                self._iface.stop()
+                pub.unsubscribe(_on_text, "mesh.rx.text")
             except Exception:
                 pass
-            self._iface = None
-        self.log.info("[UDP] PubSub listener stopped")
+            _on_text = None
+        log.info("[UDP] Listener stopped")

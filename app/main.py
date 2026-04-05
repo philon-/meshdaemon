@@ -3,127 +3,127 @@ import asyncio
 import logging
 import signal
 import sys
-from typing import Callable
-import time
-import aiohttp
+from typing import Awaitable, Callable
 from collections import deque
 from time import monotonic
 
-from . import config
-from .udp import setup_node, PubSubReceiver, send_nodeinfo
-from .router import Router
+import aiohttp
 
-# Sources
+from . import config
+from . import udp
+from .router import Router
 from .sources import vma, smhi
 
-# Supervisor configuration
 MAX_RESTART_INTERVAL = config.MAX_RESTART_INTERVAL
 RESTART_HISTORY = config.RESTART_HISTORY
 
-async def supervised_task(task_name: str, coro_func: Callable, log: logging.Logger, 
-                          restart_history: int = RESTART_HISTORY, 
-                          max_interval: int = MAX_RESTART_INTERVAL) -> None:
+log = logging.getLogger(__name__)
 
-    start_times = deque([float('-inf')], maxlen=restart_history)
-    
+async def supervised_task(
+    task_name: str,
+    coro_func: Callable[[], Awaitable[None]],
+    log: logging.Logger,
+    restart_history: int = RESTART_HISTORY,
+    max_interval: int = MAX_RESTART_INTERVAL,
+) -> None:
+    start_times = deque(maxlen=restart_history)
+
     while True:
         start_times.append(monotonic())
         try:
             await coro_func()
-            # If the coroutine returns normally, break the restart loop
-            log.info(f"[ASYNC] Task {task_name} completed normally")
+            log.info("[ASYNC] Task completed: %s", task_name)
             break
         except asyncio.CancelledError:
-            log.info(f"[ASYNC] Task {task_name} cancelled")
+            log.info("[ASYNC] Task cancelled: %s", task_name)
             raise
-        except Exception as e:
-            # Check if we're in a restart loop
-            if min(start_times) > monotonic() - max_interval:
+        except Exception as exc:
+            now = monotonic()
+            restarts_in_window = sum(1 for ts in start_times if now - ts <= max_interval)
+            if restarts_in_window >= restart_history:
                 log.error(
-                    f"[ASYNC] Task {task_name} failed {restart_history} times within {max_interval}s. "
-                    "[ASYNC] Stopping restart attempts to prevent restart loop."
+                    "[ASYNC] Task restart limit reached: %s (%d failures in %ds)",
+                    task_name, restart_history, max_interval,
                 )
                 raise
-            else:
-                log.error(f"[ASYNC] Task {task_name} crashed: {e!r}", exc_info=True)
-                log.info(f"[ASYNC] Restarting task {task_name} in 5 seconds...")
-                await asyncio.sleep(5)
+            log.error("[ASYNC] Task crashed: %s (%r)", task_name, exc, exc_info=True)
+            log.info("[ASYNC] Task restart scheduled in 5s: %s", task_name)
+            await asyncio.sleep(5)
+
 
 async def nodeinfo_heartbeat(log: logging.Logger) -> None:
-    log.info("[Nodeinfo] Broadcast interval started (interval=%ds)", config.MESHTASTIC_NODEINFO_INTERVAL)
+    log.info("[NODEINFO] Heartbeat started (interval=%ds)", config.MESHTASTIC_NODEINFO_INTERVAL)
     try:
         while True:
             await asyncio.sleep(config.MESHTASTIC_NODEINFO_INTERVAL)
             try:
-                send_nodeinfo(log)
-                log.info("[Nodeinfo] Sent")
-            except Exception as e:
-                log.warning("[Nodeinfo] Send failed: %r", e)
+                udp.send_nodeinfo()
+                log.info("[NODEINFO] Packet sent")
+            except Exception as exc:
+                log.warning("[NODEINFO] Packet send failed: %r", exc)
     except asyncio.CancelledError:
-        log.info("[Nodeinfo] Broadcast interval stopped")
+        log.info("[NODEINFO] Heartbeat stopped")
         raise
 
+
 async def main() -> None:
-    log = logging.getLogger("daemon")
-    log.setLevel(logging.INFO)
-    h = logging.StreamHandler(sys.stdout)
-    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    log.addHandler(h)
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stdout,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
-    setup_node(log)
-    send_nodeinfo(log)
-
-    router = Router(ttl_secs=config.SEEN_TTL_SECS, log=log, hold_window=config.HOLD_WINDOW_SECS, 
-                    node_id=config.MESHTASTIC_NODE_ID, salt=config.INSTANCE_SALT)
-
-    # UDP RX to mark seen
-    udp_rx = PubSubReceiver(log, on_text=router.mark_seen_from_udp)
-    udp_rx.start()
+    udp.setup_node()
+    router = Router(ttl_secs=config.SEEN_TTL_SECS)
+    udp.start(on_text=router.mark_seen_from_udp)
+    udp.send_nodeinfo()
 
     async with aiohttp.ClientSession() as session:
-        # Create supervised tasks that will auto-restart on failure
-        # Pass router.push directly to the sources
         t_vma = asyncio.create_task(
-            supervised_task("src:vma", 
-                          lambda: vma.run(session, log, warmup=config.WARMUP, push=router.push), 
-                          log),
-            name="src:vma"
+            supervised_task("src:vma", lambda: vma.run(session, warmup=config.WARMUP, push=router.push), log),
+            name="src:vma",
         )
         t_smhi = asyncio.create_task(
-            supervised_task("src:smhi", 
-                          lambda: smhi.run(session, log, warmup=config.WARMUP, push=router.push), 
-                          log),
-            name="src:smhi"
+            supervised_task("src:smhi", lambda: smhi.run(session, warmup=config.WARMUP, push=router.push), log),
+            name="src:smhi",
         )
         t_hb = asyncio.create_task(
-            supervised_task("task:nodeinfo", 
-                          lambda: nodeinfo_heartbeat(log), 
-                          log),
-            name="task:nodeinfo"
+            supervised_task("task:nodeinfo", lambda: nodeinfo_heartbeat(log), log),
+            name="task:nodeinfo",
         )
 
         tasks = [t_vma, t_smhi, t_hb]
 
-        # Graceful shutdown
         stop_evt = asyncio.Event()
-
-        def _stop(*_):
-            stop_evt.set()
-
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                loop.add_signal_handler(sig, _stop)
+                loop.add_signal_handler(sig, lambda: stop_evt.set())
             except NotImplementedError:
-                signal.signal(sig, lambda *_: _stop())
+                signal.signal(sig, lambda *_: stop_evt.set())
 
-        await stop_evt.wait()
+        stop_waiter = asyncio.create_task(stop_evt.wait(), name="task:stop-waiter")
+        done, _ = await asyncio.wait([*tasks, stop_waiter], return_when=asyncio.FIRST_COMPLETED)
+
+        if stop_waiter not in done:
+            for completed in done:
+                if completed.cancelled():
+                    continue
+                exc = completed.exception()
+                if exc is None:
+                    log.error("[ASYNC] Task exited unexpectedly: %s", completed.get_name())
+                else:
+                    log.error("[ASYNC] Task failed: %s (%r)", completed.get_name(), exc)
+            stop_evt.set()
 
         for t in tasks:
             t.cancel()
+        stop_waiter.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(stop_waiter, return_exceptions=True)
 
-        udp_rx.stop()
+        udp.stop()
+
 
 if __name__ == "__main__":
     try:
