@@ -131,9 +131,9 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
             out.extend(truncate_utf8(full_message))
 
     msgs = [m.strip() for m in out if m.strip()]
-    log.info("[SMHI] Messages fetched: %d", len(msgs))
+    log.debug("[SMHI] Messages fetched: %d", len(msgs))
     for m in msgs:
-        log.info("[SMHI] Message ready: %s", m)
+        log.debug("[SMHI] Message ready: %s", m)
 
     return msgs
 

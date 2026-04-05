@@ -84,9 +84,9 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
             out.extend(truncate_utf8(msg))
 
     msgs = [m.strip() for m in out if m.strip()]
-    log.info("[VMA] Messages fetched: %d", len(msgs))
+    log.debug("[VMA] Messages fetched: %d", len(msgs))
     for m in msgs:
-        log.info("[VMA] Message ready: %s", m)
+        log.debug("[VMA] Message ready: %s", m)
     return msgs
 
 
