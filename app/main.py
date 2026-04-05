@@ -3,7 +3,7 @@ import asyncio
 import logging
 import signal
 import sys
-from typing import Callable
+from typing import Awaitable, Callable
 from collections import deque
 from time import monotonic
 
@@ -21,46 +21,48 @@ log = logging.getLogger(__name__)
 
 async def supervised_task(
     task_name: str,
-    coro_func: Callable,
+    coro_func: Callable[[], Awaitable[None]],
     log: logging.Logger,
     restart_history: int = RESTART_HISTORY,
     max_interval: int = MAX_RESTART_INTERVAL,
 ) -> None:
-    start_times = deque([float("-inf")], maxlen=restart_history)
+    start_times = deque(maxlen=restart_history)
 
     while True:
         start_times.append(monotonic())
         try:
             await coro_func()
-            log.info("[ASYNC] Task %s completed normally", task_name)
+            log.info("[ASYNC] Task completed: %s", task_name)
             break
         except asyncio.CancelledError:
-            log.info("[ASYNC] Task %s cancelled", task_name)
+            log.info("[ASYNC] Task cancelled: %s", task_name)
             raise
-        except Exception as e:
-            if min(start_times) > monotonic() - max_interval:
+        except Exception as exc:
+            now = monotonic()
+            restarts_in_window = sum(1 for ts in start_times if now - ts <= max_interval)
+            if restarts_in_window >= restart_history:
                 log.error(
-                    "[ASYNC] Task %s failed %d times within %ds — stopping restarts.",
+                    "[ASYNC] Task restart limit reached: %s (%d failures in %ds)",
                     task_name, restart_history, max_interval,
                 )
                 raise
-            log.error("[ASYNC] Task %s crashed: %r", task_name, e, exc_info=True)
-            log.info("[ASYNC] Restarting task %s in 5 seconds...", task_name)
+            log.error("[ASYNC] Task crashed: %s (%r)", task_name, exc, exc_info=True)
+            log.info("[ASYNC] Task restart scheduled in 5s: %s", task_name)
             await asyncio.sleep(5)
 
 
 async def nodeinfo_heartbeat(log: logging.Logger) -> None:
-    log.info("[Nodeinfo] Broadcast interval started (interval=%ds)", config.MESHTASTIC_NODEINFO_INTERVAL)
+    log.info("[NODEINFO] Heartbeat started (interval=%ds)", config.MESHTASTIC_NODEINFO_INTERVAL)
     try:
         while True:
             await asyncio.sleep(config.MESHTASTIC_NODEINFO_INTERVAL)
             try:
                 udp.send_nodeinfo()
-                log.info("[Nodeinfo] Sent")
-            except Exception as e:
-                log.warning("[Nodeinfo] Send failed: %r", e)
+                log.info("[NODEINFO] Packet sent")
+            except Exception as exc:
+                log.warning("[NODEINFO] Packet send failed: %r", exc)
     except asyncio.CancelledError:
-        log.info("[Nodeinfo] Broadcast interval stopped")
+        log.info("[NODEINFO] Heartbeat stopped")
         raise
 
 
@@ -70,7 +72,7 @@ async def main() -> None:
         stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    
+
     udp.setup_node()
     router = Router(ttl_secs=config.SEEN_TTL_SECS)
     udp.start(on_text=router.mark_seen_from_udp)
@@ -100,11 +102,25 @@ async def main() -> None:
             except NotImplementedError:
                 signal.signal(sig, lambda *_: stop_evt.set())
 
-        await stop_evt.wait()
+        stop_waiter = asyncio.create_task(stop_evt.wait(), name="task:stop-waiter")
+        done, _ = await asyncio.wait([*tasks, stop_waiter], return_when=asyncio.FIRST_COMPLETED)
+
+        if stop_waiter not in done:
+            for completed in done:
+                if completed.cancelled():
+                    continue
+                exc = completed.exception()
+                if exc is None:
+                    log.error("[ASYNC] Task exited unexpectedly: %s", completed.get_name())
+                else:
+                    log.error("[ASYNC] Task failed: %s (%r)", completed.get_name(), exc)
+            stop_evt.set()
 
         for t in tasks:
             t.cancel()
+        stop_waiter.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(stop_waiter, return_exceptions=True)
 
         udp.stop()
 

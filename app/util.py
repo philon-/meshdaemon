@@ -2,6 +2,23 @@ from __future__ import annotations
 import zlib
 from . import config
 
+
+def _utf8_prefix(text: str, max_bytes: int) -> tuple[str, str]:
+    if max_bytes <= 0 or not text:
+        return "", text
+
+    used = 0
+    split_at = 0
+    for idx, char in enumerate(text):
+        char_len = len(char.encode("utf-8"))
+        if used + char_len > max_bytes:
+            break
+        used += char_len
+        split_at = idx + 1
+
+    return text[:split_at], text[split_at:]
+
+
 def truncate_utf8(s: str) -> list[str]:
     """
     Split a string into Meshtastic-sized chunks, each fitting within
@@ -20,8 +37,8 @@ def truncate_utf8(s: str) -> list[str]:
     words = s.split()
 
     # Reserve worst-case space for " N/N" suffix and optional " [...]" ellipsis
-    suffix_bytes   = len(f" {config.MESHTASTIC_MAX_MESSAGES}/{config.MESHTASTIC_MAX_MESSAGES}".encode("utf-8"))
-    ellipsis       = " [...]"
+    suffix_bytes = len(f" {config.MESHTASTIC_MAX_MESSAGES}/{config.MESHTASTIC_MAX_MESSAGES}".encode("utf-8"))
+    ellipsis = " [...]"
     ellipsis_bytes = len(ellipsis.encode("utf-8"))
 
     chunks: list[str] = []
@@ -36,7 +53,7 @@ def truncate_utf8(s: str) -> list[str]:
         cur_bytes = 0
 
         while i < len(words):
-            w   = words[i]
+            w = words[i]
             add = len(w.encode("utf-8")) + (0 if not cur_words else 1)
             if cur_bytes + add <= limit:
                 cur_words.append(w)
@@ -45,12 +62,21 @@ def truncate_utf8(s: str) -> list[str]:
             else:
                 break
 
+        if not cur_words and i < len(words) and limit > 0:
+            head, tail = _utf8_prefix(words[i], limit)
+            if head:
+                cur_words.append(head)
+                if tail:
+                    words[i] = tail
+                else:
+                    i += 1
+
         if is_last and i < len(words):
             if cur_words:
                 chunk_text = " ".join(cur_words) + ellipsis
             elif limit > 0:
                 # Nothing fit — squeeze a UTF-8-safe partial word so the user sees something
-                partial    = words[i].encode("utf-8")[:limit].decode("utf-8", "ignore")
+                partial = words[i].encode("utf-8")[:limit].decode("utf-8", "ignore")
                 chunk_text = (partial + ellipsis).strip()
             else:
                 chunk_text = ellipsis.strip()
@@ -73,4 +99,4 @@ def truncate_utf8(s: str) -> list[str]:
 
 def make_message_id(s: str) -> int:
     """Generate a deterministic 32-bit Meshtastic packet ID from a string."""
-    return zlib.crc32(s.encode('utf-8')) & 0xFFFFFFFF
+    return zlib.crc32(s.encode("utf-8")) & 0xFFFFFFFF

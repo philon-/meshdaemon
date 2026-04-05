@@ -5,12 +5,13 @@ import logging
 import re
 from zoneinfo import ZoneInfo
 from datetime import datetime
-from typing import List
+from typing import Callable, List
 
 import aiohttp
 
 from ..util import truncate_utf8
 from .. import config
+from .common import fetch_json_with_retries
 
 log = logging.getLogger(__name__)
 
@@ -33,14 +34,14 @@ _REPLACEMENTS = {
     "sydvästra": "SV",
 }
 
-repl_pattern = re.compile(
+_REPL_PATTERN = re.compile(
     "|".join(re.escape(k) for k in sorted(_REPLACEMENTS, key=len, reverse=True)),
     flags=re.IGNORECASE,
 )
 
 
 def apply_replacements(text: str) -> str:
-    return repl_pattern.sub(lambda m: _REPLACEMENTS[m.group(0).casefold()], text)
+    return _REPL_PATTERN.sub(lambda m: _REPLACEMENTS[m.group(0).casefold()], text)
 
 
 def format_range(start_local: datetime, end_local: datetime) -> str:
@@ -66,62 +67,79 @@ def _to_stockholm(dt: datetime) -> datetime:
 
 
 async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
-    last_exception = None
+    data = await fetch_json_with_retries(
+        session,
+        URL,
+        source_name="SMHI",
+        log=log,
+        max_retries=MAX_RETRIES,
+        base_backoff=BASE_BACKOFF,
+    )
+    if not isinstance(data, list):
+        log.error("[SMHI] Payload type invalid: %s", type(data).__name__)
+        return []
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            async with session.get(URL, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+    out: List[str] = []
+    for alert in data:
+        if not isinstance(alert, dict):
+            continue
+        alert_id = alert.get("id", "unknown")
+        warning_areas = alert.get("warningAreas")
+        if not isinstance(warning_areas, list):
+            continue
 
-            out: List[str] = []
-            for alert in data:
-                alert_id = alert["id"]
+        for wa in warning_areas:
+            if not isinstance(wa, dict):
+                continue
+            warning_level = wa.get("warningLevel")
+            if not isinstance(warning_level, dict):
+                continue
+            if warning_level.get("code") == "MESSAGE":
+                continue
 
-                for wa in alert["warningAreas"]:
-                    if wa["warningLevel"]["code"] == "MESSAGE":
-                        continue
+            affected_areas = wa.get("affectedAreas")
+            if not isinstance(affected_areas, list):
+                continue
+            if not any(isinstance(area, dict) and area.get("id") == GEOCODE for area in affected_areas):
+                continue
 
-                    if not any(a["id"] == GEOCODE for a in wa["affectedAreas"]):
-                        continue
+            start_iso = wa.get("approximateStart")
+            end_iso = wa.get("approximateEnd")
+            if not isinstance(start_iso, str) or not isinstance(end_iso, str):
+                log.warning("[SMHI] Alert skipped (missing time range): %s", alert_id)
+                continue
 
-                    start_local = _to_stockholm(datetime.fromisoformat(wa["approximateStart"]))
-                    end_local = _to_stockholm(datetime.fromisoformat(wa["approximateEnd"]))
-                    time_part = format_range(start_local, end_local)
+            try:
+                start_local = _to_stockholm(datetime.fromisoformat(start_iso))
+                end_local = _to_stockholm(datetime.fromisoformat(end_iso))
+            except ValueError:
+                log.warning("[SMHI] Alert skipped (invalid time range): %s", alert_id)
+                continue
+            time_part = format_range(start_local, end_local)
 
-                    full_message = apply_replacements(
-                        f"SMHI: {wa['warningLevel']['sv']} varning {wa['areaName']['sv']} - "
-                        f"{wa['eventDescription']['sv']} [{time_part}]"
-                    )
+            area_name = wa.get("areaName")
+            area_name_sv = area_name.get("sv") if isinstance(area_name, dict) else "okänt område"
+            event_desc = wa.get("eventDescription")
+            event_desc_sv = event_desc.get("sv") if isinstance(event_desc, dict) else "saknar beskrivning"
+            level_sv = warning_level.get("sv") or "Okänd"
 
-                    log.info("[SMHI] New alert %s: %s", alert_id, full_message)
-                    out.extend(truncate_utf8(full_message))
+            full_message = apply_replacements(
+                f"SMHI: {level_sv} varning {area_name_sv} - {event_desc_sv} [{time_part}]"
+            )
 
-            msgs = [m.strip() for m in out if m.strip()]
-            log.info("[SMHI] Fetched %d messages", len(msgs))
-            for m in msgs:
-                log.info("[SMHI] Message: %s", m)
+            log.info("[SMHI] Alert accepted: %s (%s)", alert_id, full_message)
+            out.extend(truncate_utf8(full_message))
 
-            return msgs
+    msgs = [m.strip() for m in out if m.strip()]
+    log.info("[SMHI] Messages fetched: %d", len(msgs))
+    for m in msgs:
+        log.info("[SMHI] Message ready: %s", m)
 
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            last_exception = e
-            if attempt < MAX_RETRIES - 1:
-                backoff = BASE_BACKOFF * (2 ** attempt)
-                log.warning(
-                    "[SMHI] Request failed (attempt %d/%d): %s. Retrying in %ss...",
-                    attempt + 1, MAX_RETRIES, e, backoff,
-                )
-                await asyncio.sleep(backoff)
-            else:
-                log.error("[SMHI] Request failed after %d attempts: %s", MAX_RETRIES, e)
-
-    log.error("[SMHI] All retry attempts exhausted. Last error: %s", last_exception)
-    return []
+    return msgs
 
 
-async def run(session: aiohttp.ClientSession, warmup: bool, push: callable) -> None:
-    log.info("[SMHI] Starting source with warmup=%s", warmup)
+async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str, bool], None]) -> None:
+    log.info("[SMHI] Source started (warmup=%s)", warmup)
     msgs = await fetch_messages(session)
 
     for m in msgs:
@@ -131,4 +149,4 @@ async def run(session: aiohttp.ClientSession, warmup: bool, push: callable) -> N
         await asyncio.sleep(INTERVAL)
         msgs = await fetch_messages(session)
         for m in msgs:
-            push(m)
+            push(m, seen_only=False)

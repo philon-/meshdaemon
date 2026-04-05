@@ -1,7 +1,7 @@
 from __future__ import annotations
+import logging
 from collections import OrderedDict
 from time import monotonic
-import logging
 
 from meshtastic.protobuf import mesh_pb2
 
@@ -43,29 +43,30 @@ class TTLSeen:
 
 
 class Router:
-
     def __init__(self, ttl_secs: float) -> None:
         self.seen = TTLSeen(ttl_secs=ttl_secs)
-        log.info("[ROUTER] Router initialized. ttl_secs=%d", ttl_secs)
+        log.info("[ROUTER] Router initialized (ttl_secs=%s)", ttl_secs)
 
     @staticmethod
     def _norm(msg: str) -> str:
         return " ".join(msg.split())
 
-    def mark_seen_from_udp(self, packet: mesh_pb2.MeshPacket, addr=None) -> None:
+    def mark_seen_from_udp(self, packet: mesh_pb2.MeshPacket, addr: object | None = None) -> None:
         """Called via pub.subscribe on mesh.rx.text — signature must match mudp's topic."""
+        del addr
         try:
             self.seen.add(packet.id)
         except Exception:
             log.exception("[ROUTER] mark_seen_from_udp failed")
 
     def push(self, msg: str, seen_only: bool = False) -> None:
-        key = make_message_id(self._norm(msg))
+        normalized = self._norm(msg)
+        key = make_message_id(normalized)
         if seen_only:
             self.seen.add(key)
             return
         if self.seen.seen(key):
-            log.info("[ROUTER] Skip (seen id=0x%08x)", key)
+            log.info("[ROUTER] Message skipped: seen id=0x%08x", key)
             return
-        send_text(self._norm(msg), packet_id=key)
+        send_text(normalized, packet_id=key)
         self.seen.add(key)

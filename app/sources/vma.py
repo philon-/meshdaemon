@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import aiohttp
 
 from ..util import truncate_utf8
 from .. import config
+from .common import fetch_json_with_retries
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ MAX_RETRIES = config.MAX_RETRIES
 BASE_BACKOFF = config.BASE_BACKOFF
 
 
-def _sv_message(alert: dict) -> Optional[str]:
+def _sv_message(alert: dict[str, object]) -> Optional[str]:
     try:
         status: str = alert.get("status") or ""
         msg_type: str = alert.get("msgType") or ""
@@ -54,52 +55,43 @@ def _sv_message(alert: dict) -> Optional[str]:
             return f"VMA: {description}" if description else "VMA: Viktigt meddelande till allmänheten (detaljer saknas)."
 
         return None
-    except Exception:
+    except Exception as exc:
+        log.warning("[VMA] Alert parser failed (possible schema drift): %r", exc, exc_info=True)
         return None
 
 
 async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
     params = {"geocode": GEOCODE}
-    last_exception = None
+    data = await fetch_json_with_retries(
+        session,
+        URL,
+        source_name="VMA",
+        log=log,
+        params=params,
+        max_retries=MAX_RETRIES,
+        base_backoff=BASE_BACKOFF,
+    )
+    if not isinstance(data, dict):
+        log.error("[VMA] Payload type invalid: %s", type(data).__name__)
+        return []
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            async with session.get(URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+    out: List[str] = []
+    for alert in data.get("alerts") or []:
+        if not isinstance(alert, dict):
+            continue
+        msg = _sv_message(alert)
+        if msg:
+            out.extend(truncate_utf8(msg))
 
-            out: List[str] = []
-            for alert in data.get("alerts") or []:
-                if not isinstance(alert, dict):
-                    continue
-                msg = _sv_message(alert)
-                if msg:
-                    out.extend(truncate_utf8(msg))
-
-            msgs = [m.strip() for m in out if m.strip()]
-            log.info("[VMA] Fetched %d messages", len(msgs))
-            for m in msgs:
-                log.info("[VMA] Message: %s", m)
-            return msgs
-
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            last_exception = e
-            if attempt < MAX_RETRIES - 1:
-                backoff = BASE_BACKOFF * (2 ** attempt)
-                log.warning(
-                    "[VMA] Request failed (attempt %d/%d): %s. Retrying in %ss...",
-                    attempt + 1, MAX_RETRIES, e, backoff,
-                )
-                await asyncio.sleep(backoff)
-            else:
-                log.error("[VMA] Request failed after %d attempts: %s", MAX_RETRIES, e)
-
-    log.error("[VMA] All retry attempts exhausted. Last error: %s", last_exception)
-    return []
+    msgs = [m.strip() for m in out if m.strip()]
+    log.info("[VMA] Messages fetched: %d", len(msgs))
+    for m in msgs:
+        log.info("[VMA] Message ready: %s", m)
+    return msgs
 
 
-async def run(session: aiohttp.ClientSession, warmup: bool, push: callable) -> None:
-    log.info("[VMA] Starting source with warmup=%s", warmup)
+async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str, bool], None]) -> None:
+    log.info("[VMA] Source started (warmup=%s)", warmup)
     msgs = await fetch_messages(session)
 
     for m in msgs:
@@ -109,4 +101,4 @@ async def run(session: aiohttp.ClientSession, warmup: bool, push: callable) -> N
         await asyncio.sleep(INTERVAL)
         msgs = await fetch_messages(session)
         for m in msgs:
-            push(m)
+            push(m, seen_only=False)
