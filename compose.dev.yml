@@ -1,0 +1,15 @@
+# Development overrides - live code reload during development
+# Usage: docker compose -f compose.yml -f compose.dev.yml up
+
+services:
+  meshdaemon:
+    # Mount app source as writable for instant code changes
+    volumes:
+      - ./app:/app/app
+
+    # Keep container running if app crashes (easier debugging)
+    restart: "no"
+
+    # Prevent Python from caching bytecode
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
