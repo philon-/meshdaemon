@@ -22,12 +22,12 @@ Key settings for your deployment:
 docker compose up -d
 ```
 
-**Development (with live code reload):**
+**Development:**
 ```bash
 docker compose -f compose.yml -f compose.dev.yml up
 ```
 
-Changes to files in `app/` are instantly visible in the container. No rebuild needed. Just restart the container if the app crashes.
+Changes to files in `app/` are instantly visible in the container. No rebuild needed. Just restart the container if the app crashes or enable watch using --watch.
 
 ## Network Requirements
 

@@ -13,3 +13,9 @@ services:
     # Prevent Python from caching bytecode
     environment:
       - PYTHONDONTWRITEBYTECODE=1
+
+    # Enable Docker Compose watch for live reload
+    develop:
+      watch:
+        - path: ./app
+          action: restart

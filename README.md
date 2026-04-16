@@ -17,6 +17,23 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## Docker
+
+Production run:
+
+```bash
+docker compose up -d --build
+```
+
+The compose service uses host networking so UDP multicast works against the host LAN.
+Put overrides in a `.env` file or export them before invoking Compose; any setting in `app/config.py` can be passed through this way.
+
+Development run with a bind mount:
+
+```bash
+docker compose -f compose.yml -f compose.dev.yml up
+```
+
 ## Configure
 Environment variables (with defaults):
 
