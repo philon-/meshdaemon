@@ -5,10 +5,12 @@ from .udp import send_text
 
 
 def normalize_message(s: str) -> str:
+    """Normalize whitespace in a message."""
     return " ".join(s.split())
 
 
 def _utf8_prefix(text: str, max_bytes: int) -> tuple[str, str]:
+    """Split text at a UTF-8 safe boundary within max_bytes."""
     if max_bytes <= 0 or not text:
         return "", text
 

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable
 
 import aiohttp
 
 from ..util import truncate_utf8
 from .. import config
-from .common import fetch_json_with_retries
+from .common import fetch_json_with_retries, run_source
 
 log = logging.getLogger(__name__)
 
@@ -20,11 +19,11 @@ MAX_RETRIES = config.MAX_RETRIES
 BASE_BACKOFF = config.BASE_BACKOFF
 
 
-def _sv_message(alert: dict[str, object]) -> Optional[str]:
+def _sv_message(alert: dict[str, object]) -> str | None:
     try:
         status: str = alert.get("status") or ""
         msg_type: str = alert.get("msgType") or ""
-        sent_iso: Optional[str] = alert.get("sent")
+        sent_iso: str | None = alert.get("sent")
 
         info = alert.get("info") or alert.get("Info") or []
         i0 = info[0] if isinstance(info, list) and info else {}
@@ -60,7 +59,7 @@ def _sv_message(alert: dict[str, object]) -> Optional[str]:
         return None
 
 
-async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
+async def fetch_messages(session: aiohttp.ClientSession) -> list[str]:
     params = {"geocode": GEOCODE}
     data = await fetch_json_with_retries(
         session,
@@ -75,7 +74,7 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
         log.error("[VMA] Payload type invalid: %s", type(data).__name__)
         return []
 
-    out: List[str] = []
+    out: list[str] = []
     for alert in data.get("alerts") or []:
         if not isinstance(alert, dict):
             continue
@@ -91,17 +90,11 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
 
 
 async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str], None]) -> None:
-    log.info("[VMA] Source started (warmup=%s)", warmup)
-    msgs = await fetch_messages(session)
-
-    if warmup:
-        log.info("[VMA] Warmup complete: initial messages suppressed (%d)", len(msgs))
-    else:
-        for m in msgs:
-            push(m)
-
-    while True:
-        await asyncio.sleep(INTERVAL)
-        msgs = await fetch_messages(session)
-        for m in msgs:
-            push(m)
+    await run_source(
+        source_name="VMA",
+        log=log,
+        fetch_messages=lambda: fetch_messages(session),
+        push=push,
+        interval=INTERVAL,
+        warmup=warmup,
+    )

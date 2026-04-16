@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from zoneinfo import ZoneInfo
 from datetime import datetime
-from typing import Callable, List
+from typing import Callable
 
 import aiohttp
 
 from ..util import truncate_utf8
 from .. import config
-from .common import fetch_json_with_retries
+from .common import fetch_json_with_retries, run_source
 
 log = logging.getLogger(__name__)
 
@@ -41,10 +40,12 @@ _REPL_PATTERN = re.compile(
 
 
 def apply_replacements(text: str) -> str:
+    """Apply direction abbreviations (norra > N, etc.) to text."""
     return _REPL_PATTERN.sub(lambda m: _REPLACEMENTS[m.group(0).casefold()], text)
 
 
 def format_range(start_local: datetime, end_local: datetime) -> str:
+    """Format a time range for display, handling same-day vs multi-day ranges."""
     start_tz = start_local.strftime("%Z")
     end_tz = end_local.strftime("%Z")
 
@@ -61,12 +62,13 @@ def format_range(start_local: datetime, end_local: datetime) -> str:
 
 
 def _to_stockholm(dt: datetime) -> datetime:
+    """Convert a datetime to Stockholm timezone."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo("UTC"))
     return dt.astimezone(_STOCKHOLM)
 
 
-async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
+async def fetch_messages(session: aiohttp.ClientSession) -> list[str]:
     data = await fetch_json_with_retries(
         session,
         URL,
@@ -79,7 +81,7 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
         log.error("[SMHI] Payload type invalid: %s", type(data).__name__)
         return []
 
-    out: List[str] = []
+    out: list[str] = []
     for alert in data:
         if not isinstance(alert, dict):
             continue
@@ -139,17 +141,11 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
 
 
 async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str], None]) -> None:
-    log.info("[SMHI] Source started (warmup=%s)", warmup)
-    msgs = await fetch_messages(session)
-
-    if warmup:
-        log.info("[SMHI] Warmup complete: initial messages suppressed (%d)", len(msgs))
-    else:
-        for m in msgs:
-            push(m)
-
-    while True:
-        await asyncio.sleep(INTERVAL)
-        msgs = await fetch_messages(session)
-        for m in msgs:
-            push(m)
+    await run_source(
+        source_name="SMHI",
+        log=log,
+        fetch_messages=lambda: fetch_messages(session),
+        push=push,
+        interval=INTERVAL,
+        warmup=warmup,
+    )

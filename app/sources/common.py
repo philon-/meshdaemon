@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
@@ -43,3 +44,38 @@ async def fetch_json_with_retries(
 
     log.error("[%s] All retry attempts exhausted. Last error: %s", source_name, last_exception)
     return None
+
+
+async def run_source(
+    source_name: str,
+    log: logging.Logger,
+    fetch_messages: Callable[[], Awaitable[list[str]]],
+    push: Callable[[str], None],
+    interval: int,
+    warmup: bool,
+) -> None:
+    """
+    Generic source runner that handles the fetch > process > push loop.
+
+    Args:
+        source_name: Display name for logging (e.g., "VMA", "SMHI")
+        log: Logger instance
+        fetch_messages: Async function that returns list[str] of messages
+        push: Callback to send each message
+        interval: Sleep interval between fetches (seconds)
+        warmup: If True, suppress initial messages on startup
+    """
+    log.info("[%s] Source started (warmup=%s)", source_name, warmup)
+    msgs = await fetch_messages()
+
+    if warmup:
+        log.info("[%s] Warmup complete: initial messages suppressed (%d)", source_name, len(msgs))
+    else:
+        for m in msgs:
+            push(m)
+
+    while True:
+        await asyncio.sleep(interval)
+        msgs = await fetch_messages()
+        for m in msgs:
+            push(m)
