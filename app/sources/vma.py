@@ -90,15 +90,18 @@ async def fetch_messages(session: aiohttp.ClientSession) -> List[str]:
     return msgs
 
 
-async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str, bool], None]) -> None:
+async def run(session: aiohttp.ClientSession, warmup: bool, push: Callable[[str], None]) -> None:
     log.info("[VMA] Source started (warmup=%s)", warmup)
     msgs = await fetch_messages(session)
 
-    for m in msgs:
-        push(m, seen_only=warmup)
+    if warmup:
+        log.info("[VMA] Warmup complete: initial messages suppressed (%d)", len(msgs))
+    else:
+        for m in msgs:
+            push(m)
 
     while True:
         await asyncio.sleep(INTERVAL)
         msgs = await fetch_messages(session)
         for m in msgs:
-            push(m, seen_only=False)
+            push(m)

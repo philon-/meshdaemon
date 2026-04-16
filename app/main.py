@@ -11,7 +11,7 @@ import aiohttp
 
 from . import config
 from . import udp
-from .router import Router
+from .util import send_message
 from .sources import vma, smhi
 
 MAX_RESTART_INTERVAL = config.MAX_RESTART_INTERVAL
@@ -74,17 +74,15 @@ async def main() -> None:
     )
 
     udp.setup_node()
-    router = Router(ttl_secs=config.SEEN_TTL_SECS)
-    udp.start(on_text=router.mark_seen_from_udp)
     udp.send_nodeinfo()
 
     async with aiohttp.ClientSession() as session:
         t_vma = asyncio.create_task(
-            supervised_task("src:vma", lambda: vma.run(session, warmup=config.WARMUP, push=router.push), log),
+            supervised_task("src:vma", lambda: vma.run(session, warmup=config.WARMUP, push=send_message), log),
             name="src:vma",
         )
         t_smhi = asyncio.create_task(
-            supervised_task("src:smhi", lambda: smhi.run(session, warmup=config.WARMUP, push=router.push), log),
+            supervised_task("src:smhi", lambda: smhi.run(session, warmup=config.WARMUP, push=send_message), log),
             name="src:smhi",
         )
         t_hb = asyncio.create_task(
@@ -121,8 +119,6 @@ async def main() -> None:
         stop_waiter.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.gather(stop_waiter, return_exceptions=True)
-
-        udp.stop()
 
 
 if __name__ == "__main__":

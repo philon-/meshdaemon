@@ -2,10 +2,10 @@
 
 Multi-source async daemon that:
 - Polls REST endpoints on different intervals,
-- Listens to UDP multicast for Meshtastic (via `mudp`),
-- Sends messages it has not heard before to the mesh
+- Sends deterministic outbound alerts to a local Meshtastic mesh,
+- Uses firmware-level dedupe for repeated packet IDs
 
-We use this in Stockholm to broadcast weather and PSA warnings. This script can be run by multiple nodes and any warnings heard before broadcast will be suppressed. This way multiple users can run the script without drowning the mesh in warnings.
+We use this in Stockholm to broadcast weather and PSA warnings. This script can be run by multiple nodes and repeated warnings are deduped by Meshtastic firmware. Warmup suppresses the first fetch on restart so active alerts are not rebroadcast.
 
 Uses [Sveriges Radio's API](https://vmaapi.sr.se/index.html?urls.primaryName=v3.0-beta) for Important Public Announcements / Viktigt meddelande till allmänheten (3.0) to extract alerts for a given region and broadcast to a local Meshtastic® network.
 
@@ -33,22 +33,21 @@ Environment variables (with defaults):
 | `MESHTASTIC_MAX_BYTES` | `200` | Max UTF-8 bytes per text chunk |
 | `MESHTASTIC_MAX_MESSAGES` | `2` | Max chunks per outbound alert |
 | `NODEINFO_INTERVAL_SECS` | `43200` | Nodeinfo broadcast interval (12h) |
-| `SEEN_TTL_SECS` | `86400` | Dedupe memory TTL for seen messages |
 | `VMA_URL` | Sveriges Radio URL | VMA API endpoint |
 | `VMA_INTERVAL` | `60` | VMA polling interval in seconds |
 | `VMA_GEOCODE` | `01` | VMA geocode filter |
 | `SMHI_URL` | SMHI URL | SMHI warning endpoint |
 | `SMHI_INTERVAL` | `60` | SMHI polling interval in seconds |
 | `SMHI_GEOCODE` | `1` | SMHI area id filter |
-| `WARMUP` | `1` | `1` = mark first fetch as seen only, do not transmit |
+| `WARMUP` | `1` | `1` = suppress the first fetch after startup |
 | `MAX_RETRIES` | `3` | HTTP retries per fetch cycle |
 | `BASE_BACKOFF` | `2` | Exponential backoff base seconds |
 | `MAX_RESTART_INTERVAL` | `60` | Worker restart throttle window |
 | `RESTART_HISTORY` | `5` | Worker failures in window before stop |
 
 ## Runtime behavior
-- **Warmup**: on source startup, first fetched messages are inserted into dedupe state with `seen_only=True`; this suppresses startup floods.
-- **Dedupe strategy**: All instances use the same deterministic CRC32 hash of normalized message text to generate packet IDs when broadcasting. When receiving packets from the mesh, we store the packet ID in the dedupe cache. Since all instances send with content-based IDs, receiving an identical message (from any source node) will have the same packet ID, triggering dedupe and preventing relay floods.
+- **Warmup**: on source startup, the first fetch is suppressed so a restart during an active warning does not rebroadcast existing alerts.
+- **Packet IDs**: All instances use the same deterministic CRC32 hash of normalized message text to generate packet IDs when broadcasting. Meshtastic firmware dedupes repeated packets that share the same ID, which prevents relay floods without local receive-side tracking.
 - **Failure policy**: each worker restarts after crashes; if crashes reach `RESTART_HISTORY` within `MAX_RESTART_INTERVAL`, the task fails and the daemon shuts down.
 
 ## Logging style

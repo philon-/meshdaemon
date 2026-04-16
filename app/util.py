@@ -1,6 +1,11 @@
 from __future__ import annotations
 import zlib
 from . import config
+from .udp import send_text
+
+
+def normalize_message(s: str) -> str:
+    return " ".join(s.split())
 
 
 def _utf8_prefix(text: str, max_bytes: int) -> tuple[str, str]:
@@ -100,3 +105,9 @@ def truncate_utf8(s: str) -> list[str]:
 def make_message_id(s: str) -> int:
     """Generate a deterministic 32-bit Meshtastic packet ID from a string."""
     return zlib.crc32(s.encode("utf-8")) & 0xFFFFFFFF
+
+
+def send_message(s: str) -> None:
+    """Normalize a message, derive its packet ID, and send it."""
+    normalized = normalize_message(s)
+    send_text(normalized, packet_id=make_message_id(normalized))

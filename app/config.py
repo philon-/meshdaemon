@@ -17,10 +17,6 @@ MESHTASTIC_MAX_MESSAGES: int = int(os.getenv("MESHTASTIC_MAX_MESSAGES", "2"))
 
 MESHTASTIC_NODEINFO_INTERVAL: int = int(os.getenv("NODEINFO_INTERVAL_SECS", "43200"))  # 43200s / 12h default
 
-# Dedupe TTL (seconds), how long to remember "seen" messages. 
-# For some sources that have long standing warnings, this means messages are repeated every TTL seconds.
-SEEN_TTL_SECS: float = float(os.getenv("SEEN_TTL_SECS", "86400")) # 86400s / 24h default
-
 # Sources
 VMA_URL: str = os.getenv("VMA_URL", "https://vmaapi.sr.se/api/v3/alerts")
 VMA_INTERVAL: int = int(os.getenv("VMA_INTERVAL", "60"))
@@ -30,7 +26,7 @@ SMHI_URL: str = os.getenv("SMHI_URL", "https://opendata-download-warnings.smhi.s
 SMHI_INTERVAL: int = int(os.getenv("SMHI_INTERVAL", "60"))
 SMHI_GEOCODE: int = int(os.getenv("SMHI_GEOCODE", "1"))  # 1 is Stockholm, defined here https://opendata-download-warnings.smhi.se/ibww/api/version/1/metadata/area.json
 
-WARMUP: bool = os.getenv("WARMUP", "1") == "1"  # If true, skip sending messages for the first fetch of each source.
+WARMUP: bool = os.getenv("WARMUP", "1") == "1"  # If true, suppress the first fetch after startup.
 
 MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))  # perform 3 attempts
 BASE_BACKOFF: int = int(os.getenv("BASE_BACKOFF", "2"))  # base backoff in seconds
